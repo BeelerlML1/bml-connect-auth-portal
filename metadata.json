@@ -1,0 +1,6 @@
+{
+  "name": "BML CONNECT Authentication Portal",
+  "description": "Official authentication, email confirmation, and password recovery portal for the BML CONNECT Android app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

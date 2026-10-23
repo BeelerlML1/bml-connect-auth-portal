@@ -1,0 +1,3 @@
+# Netlify Single Page Application (SPA) redirect rule
+# Redirects all incoming routes (/auth/callback, /reset-password, /auth/error) to /index.html
+/*    /index.html   200
