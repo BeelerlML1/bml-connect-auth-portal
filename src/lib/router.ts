@@ -4,13 +4,14 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { parseAuthUrl } from './auth-helpers';
 
 export type AppRoute = '/' | '/auth/callback' | '/reset-password' | '/auth/error';
 
 /**
  * Normalizes pathname to one of the 4 supported application routes.
  */
-export function getNormalizedRoute(pathname: string, search: string): AppRoute {
+export function getNormalizedRoute(pathname: string, search: string, hash = ''): AppRoute {
   // Check if query string specified explicit route (e.g. for testing or static fallback)
   const params = new URLSearchParams(search);
   const routeParam = params.get('route');
@@ -33,19 +34,32 @@ export function getNormalizedRoute(pathname: string, search: string): AppRoute {
     return '/auth/error';
   }
 
+  // Handle incoming redirect on root URL ("/") with authentication parameters:
+  // Supabase default Site URL is often "https://portal-domain.com/" without explicit subpath.
+  const parsed = parseAuthUrl(`${cleanPath}${search}${hash}`);
+  if (parsed.error || parsed.errorCode) {
+    return '/auth/error';
+  }
+  if (parsed.type === 'recovery' || parsed.next === '/reset-password' || parsed.next === 'reset-password') {
+    return '/reset-password';
+  }
+  if (parsed.hasAuthParams) {
+    return '/auth/callback';
+  }
+
   return '/';
 }
 
 export function useRouter() {
   const [currentPath, setCurrentPath] = useState<AppRoute>(() =>
     typeof window !== 'undefined'
-      ? getNormalizedRoute(window.location.pathname, window.location.search)
+      ? getNormalizedRoute(window.location.pathname, window.location.search, window.location.hash)
       : '/'
   );
 
   useEffect(() => {
     const handleLocationChange = () => {
-      const nextRoute = getNormalizedRoute(window.location.pathname, window.location.search);
+      const nextRoute = getNormalizedRoute(window.location.pathname, window.location.search, window.location.hash);
       setCurrentPath(nextRoute);
     };
 

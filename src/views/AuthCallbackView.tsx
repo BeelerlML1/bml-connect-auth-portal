@@ -17,7 +17,17 @@ import {
 } from 'lucide-react';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { getSupabaseClient, getSupabaseConfig } from '../lib/supabase-client';
-import { parseAuthUrl, getFriendlyErrorMessage, FriendlyError } from '../lib/auth-helpers';
+import {
+  parseAuthUrl,
+  getFriendlyErrorMessage,
+  FriendlyError,
+  isRecoveryFlow,
+  isTokenConsumed,
+  markTokenConsumed,
+  getInFlightExchange,
+  setInFlightExchange,
+  clearInFlightExchange,
+} from '../lib/auth-helpers';
 import { DeepLinkButton } from '../components/DeepLinkButton';
 
 interface AuthCallbackViewProps {
@@ -41,13 +51,8 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
   const [status, setStatus] = useState<CallbackStatus>('analyzing');
   const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
   const [friendlyError, setFriendlyError] = useState<FriendlyError | null>(null);
-  const executionRef = useRef(false);
 
   useEffect(() => {
-    // Avoid double execution in React StrictMode
-    if (executionRef.current) return;
-    executionRef.current = true;
-
     const fullUrl = window.location.href;
     const parsed = parseAuthUrl(fullUrl);
 
@@ -61,7 +66,23 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
 
     // 2. Check if authentication parameters exist
     if (!parsed.tokenHash && !parsed.code && !parsed.accessToken) {
-      setStatus('no_params');
+      // Check if user already has an active authenticated session
+      const client = getSupabaseClient();
+      if (client) {
+        client.auth.getSession().then(({ data }) => {
+          if (data.session) {
+            if (isRecoveryFlow(parsed, data.session)) {
+              navigate('/reset-password');
+              return;
+            }
+          }
+          setStatus('no_params');
+        }).catch(() => {
+          setStatus('no_params');
+        });
+      } else {
+        setStatus('no_params');
+      }
       return;
     }
 
@@ -73,89 +94,142 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
       return;
     }
 
-    // 4. Perform official Supabase token exchange
+    // 4. Token deduplication key
+    const tokenKey = parsed.code
+      ? `code:${parsed.code}`
+      : parsed.tokenHash
+      ? `token:${parsed.tokenHash}:${parsed.type || 'unknown'}`
+      : `access_token:${(parsed.accessToken || '').slice(0, 20)}`;
+
+    // If this token was already exchanged in the current session, don't re-send to Supabase
+    if (isTokenConsumed(tokenKey)) {
+      client.auth.getSession().then(({ data }) => {
+        if (isRecoveryFlow(parsed, data.session)) {
+          navigate('/reset-password');
+        } else {
+          setVerifiedEmail(data.session?.user?.email || null);
+          setStatus('success');
+        }
+      });
+      return;
+    }
+
+    // 5. Perform official Supabase token exchange (with in-flight deduplication)
     const performExchange = async () => {
       setStatus('verifying');
 
+      // If already in flight, reuse existing promise to prevent duplicate single-use consumption
+      const existingPromise = getInFlightExchange<any>(tokenKey);
+      if (existingPromise) {
+        try {
+          const res = await existingPromise;
+          if (res?.isRecovery) {
+            setStatus('redirecting_recovery');
+            navigate('/reset-password');
+          } else if (res?.success) {
+            setVerifiedEmail(res.email || null);
+            setStatus('success');
+          } else if (res?.error) {
+            setFriendlyError(res.error);
+            setStatus('error');
+          }
+        } catch (err: any) {
+          setFriendlyError(getFriendlyErrorMessage('exchange_error', err.message));
+          setStatus('error');
+        }
+        return;
+      }
+
+      const exchangePromise = (async () => {
+        try {
+          // Case A: PKCE Token Hash (Email verification or recovery)
+          if (parsed.tokenHash && parsed.type) {
+            const otpType = parsed.type as EmailOtpType;
+            const { data, error } = await client.auth.verifyOtp({
+              token_hash: parsed.tokenHash,
+              type: otpType,
+            });
+
+            if (error) {
+              const errInfo = getFriendlyErrorMessage(error.name, error.message);
+              return { success: false, isRecovery: false, error: errInfo };
+            }
+
+            markTokenConsumed(tokenKey);
+            const isRecovery = otpType === 'recovery' || isRecoveryFlow(parsed, data.session);
+            const email = data.user?.email || data.session?.user?.email || null;
+            return { success: true, isRecovery, email };
+          }
+
+          // Case B: PKCE Auth Code flow
+          if (parsed.code) {
+            const { data, error } = await client.auth.exchangeCodeForSession(parsed.code);
+
+            if (error) {
+              // Before failing, check if session was established concurrently or previously
+              const { data: sessionData } = await client.auth.getSession();
+              if (sessionData?.session) {
+                markTokenConsumed(tokenKey);
+                const isRecovery = isRecoveryFlow(parsed, sessionData.session);
+                const email = sessionData.session.user?.email || null;
+                return { success: true, isRecovery, email };
+              }
+              const errInfo = getFriendlyErrorMessage(error.name, error.message);
+              return { success: false, isRecovery: false, error: errInfo };
+            }
+
+            markTokenConsumed(tokenKey);
+            const isRecovery = isRecoveryFlow(parsed, data.session);
+            const email = data.user?.email || data.session?.user?.email || null;
+            return { success: true, isRecovery, email };
+          }
+
+          // Case C: Hash token (Implicit flow)
+          if (parsed.accessToken) {
+            const { data, error } = await client.auth.setSession({
+              access_token: parsed.accessToken,
+              refresh_token: parsed.refreshToken || '',
+            });
+
+            if (error || !data.session) {
+              const errInfo = getFriendlyErrorMessage('invalid_token', 'Could not establish session from link');
+              return { success: false, isRecovery: false, error: errInfo };
+            }
+
+            markTokenConsumed(tokenKey);
+            const isRecovery = isRecoveryFlow(parsed, data.session);
+            const email = data.session.user?.email || null;
+            return { success: true, isRecovery, email };
+          }
+
+          return { success: false, isRecovery: false, error: null };
+        } finally {
+          clearInFlightExchange(tokenKey);
+        }
+      })();
+
+      setInFlightExchange(tokenKey, exchangePromise);
+
       try {
-        // Case A: PKCE Token Hash (Email verification or recovery)
-        if (parsed.tokenHash && parsed.type) {
-          const otpType = parsed.type as EmailOtpType;
-          const { data, error } = await client.auth.verifyOtp({
-            token_hash: parsed.tokenHash,
-            type: otpType,
-          });
-
-          if (error) {
-            const errInfo = getFriendlyErrorMessage(error.name, error.message);
-            setFriendlyError(errInfo);
-            setStatus('error');
-            return;
+        const result = await exchangePromise;
+        if (result.isRecovery) {
+          setStatus('redirecting_recovery');
+          // Clean sensitive token from history bar before navigation
+          if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+            window.history.replaceState({}, '', '/auth/callback');
           }
-
-          // Strict separation: password recovery must ALWAYS open the reset-password screen
-          if (otpType === 'recovery') {
-            setStatus('redirecting_recovery');
-            setTimeout(() => {
-              navigate('/reset-password');
-            }, 800);
-            return;
-          }
-
-          // Email confirmation flow
-          const email = data.user?.email || data.session?.user?.email || null;
-          setVerifiedEmail(email);
+          setTimeout(() => {
+            navigate('/reset-password');
+          }, 350);
+        } else if (result.success) {
+          setVerifiedEmail(result.email || null);
           setStatus('success');
-          return;
+        } else if (result.error) {
+          setFriendlyError(result.error);
+          setStatus('error');
+        } else {
+          setStatus('no_params');
         }
-
-        // Case B: PKCE Auth Code flow
-        if (parsed.code) {
-          const { data, error } = await client.auth.exchangeCodeForSession(parsed.code);
-          if (error) {
-            const errInfo = getFriendlyErrorMessage(error.name, error.message);
-            setFriendlyError(errInfo);
-            setStatus('error');
-            return;
-          }
-
-          if (parsed.next === '/reset-password' || parsed.type === 'recovery') {
-            setStatus('redirecting_recovery');
-            setTimeout(() => {
-              navigate('/reset-password');
-            }, 800);
-            return;
-          }
-
-          const email = data.user?.email || data.session?.user?.email || null;
-          setVerifiedEmail(email);
-          setStatus('success');
-          return;
-        }
-
-        // Case C: Hash token (Implicit flow)
-        if (parsed.accessToken) {
-          const { data: sessionData, error: sessionErr } = await client.auth.getSession();
-          if (sessionErr || !sessionData.session) {
-            setFriendlyError(getFriendlyErrorMessage('invalid_token', 'Could not establish session from link'));
-            setStatus('error');
-            return;
-          }
-
-          if (parsed.type === 'recovery') {
-            setStatus('redirecting_recovery');
-            setTimeout(() => {
-              navigate('/reset-password');
-            }, 800);
-            return;
-          }
-
-          setVerifiedEmail(sessionData.session.user?.email || null);
-          setStatus('success');
-          return;
-        }
-
-        setStatus('no_params');
       } catch (err: any) {
         setFriendlyError(getFriendlyErrorMessage('unexpected_error', err.message || 'Network communication error'));
         setStatus('error');

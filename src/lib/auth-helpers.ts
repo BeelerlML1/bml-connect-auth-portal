@@ -76,6 +76,60 @@ export function parseAuthUrl(urlInput: string): ParsedAuthParams {
   };
 }
 
+/**
+ * Determines whether the parsed authentication parameters or established session
+ * represent a password recovery operation versus a normal sign-in or email confirmation.
+ */
+export function isRecoveryFlow(parsed: ParsedAuthParams, session?: any): boolean {
+  if (parsed.type === 'recovery') return true;
+  if (parsed.next === '/reset-password' || parsed.next === 'reset-password') return true;
+  if (parsed.rawParams['type'] === 'recovery') return true;
+
+  // Supabase GoTrue sets AMR (Authentication Method Reference) to recovery
+  if (session?.amr && Array.isArray(session.amr)) {
+    if (session.amr.some((m: any) => m && m.method === 'recovery')) return true;
+  }
+
+  // Check if session user has recent recovery timestamp
+  if (session?.user?.recovery_sent_at) {
+    const sentTime = new Date(session.user.recovery_sent_at).getTime();
+    if (!isNaN(sentTime) && Date.now() - sentTime < 24 * 60 * 60 * 1000) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Global in-memory cache to prevent duplicate token/code exchanges across React StrictMode & re-renders
+const inFlightExchanges = new Map<string, Promise<any>>();
+const consumedTokens = new Set<string>();
+
+export function isTokenConsumed(token: string): boolean {
+  return consumedTokens.has(token);
+}
+
+export function markTokenConsumed(token: string): void {
+  consumedTokens.add(token);
+}
+
+export function getInFlightExchange<T = any>(token: string): Promise<T> | undefined {
+  return inFlightExchanges.get(token);
+}
+
+export function setInFlightExchange<T = any>(token: string, promise: Promise<T>): void {
+  inFlightExchanges.set(token, promise);
+}
+
+export function clearInFlightExchange(token: string): void {
+  inFlightExchanges.delete(token);
+}
+
+export function resetTokenExchangeStateForTests(): void {
+  consumedTokens.clear();
+  inFlightExchanges.clear();
+}
+
 export interface PasswordStrength {
   score: number; // 0 to 4
   label: 'Weak' | 'Fair' | 'Good' | 'Strong';

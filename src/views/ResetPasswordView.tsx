@@ -18,7 +18,14 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { getSupabaseClient, getSupabaseConfig } from '../lib/supabase-client';
-import { validatePassword, parseAuthUrl } from '../lib/auth-helpers';
+import {
+  validatePassword,
+  parseAuthUrl,
+  getFriendlyErrorMessage,
+  isTokenConsumed,
+  markTokenConsumed,
+  isRecoveryFlow,
+} from '../lib/auth-helpers';
 import { DeepLinkButton } from '../components/DeepLinkButton';
 
 interface ResetPasswordViewProps {
@@ -57,65 +64,203 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
       return;
     }
 
+    let isMounted = true;
+
     const checkGenuineSession = async () => {
-      // 1. Check if token_hash was passed directly on this route
       const parsed = parseAuthUrl(window.location.href);
-      if (parsed.tokenHash && parsed.type === 'recovery') {
-        const { data, error } = await client.auth.verifyOtp({
-          token_hash: parsed.tokenHash,
-          type: 'recovery',
-        });
-        if (error) {
-          setErrorMessage(error.message);
+
+      // 1. Check if URL contains auth error parameters
+      if (parsed.error || parsed.errorCode) {
+        const errorInfo = getFriendlyErrorMessage(parsed.errorCode || parsed.error, parsed.errorDescription);
+        if (isMounted) {
+          setErrorMessage(errorInfo.description);
           setSessionState('unauthorized');
-          return;
         }
-        if (data.session) {
-          setUserEmail(data.session.user.email || null);
+        return;
+      }
+
+      // 2. Token deduplication key
+      const tokenKey = parsed.code
+        ? `code:${parsed.code}`
+        : parsed.tokenHash
+        ? `token:${parsed.tokenHash}:${parsed.type || 'recovery'}`
+        : parsed.accessToken
+        ? `access_token:${parsed.accessToken.slice(0, 20)}`
+        : null;
+
+      if (tokenKey && isTokenConsumed(tokenKey)) {
+        const { data: activeSession } = await client.auth.getSession();
+        if (activeSession?.session && isMounted) {
+          setUserEmail(activeSession.session.user?.email || null);
           setSessionState('verified');
           return;
         }
       }
 
-      // 2. Check active Supabase session
-      const { data: sessionData, error } = await client.auth.getSession();
-      if (error || !sessionData.session) {
-        setSessionState('unauthorized');
+      // Case A: Token Hash in URL (verifyOtp)
+      if (parsed.tokenHash) {
+        const otpType = (parsed.type || 'recovery') as any;
+        const { data, error } = await client.auth.verifyOtp({
+          token_hash: parsed.tokenHash,
+          type: otpType,
+        });
+
+        if (error) {
+          const errInfo = getFriendlyErrorMessage(error.name, error.message);
+          if (isMounted) {
+            setErrorMessage(errInfo.description);
+            setSessionState('unauthorized');
+          }
+          return;
+        }
+
+        if (tokenKey) markTokenConsumed(tokenKey);
+        if (isMounted) {
+          setUserEmail(data.session?.user?.email || data.user?.email || null);
+          setSessionState('verified');
+        }
+        if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+          window.history.replaceState({}, '', '/reset-password');
+        }
         return;
       }
 
-      setUserEmail(sessionData.session.user.email || null);
-      setSessionState('verified');
+      // Case B: PKCE Auth Code in URL (exchangeCodeForSession)
+      if (parsed.code) {
+        const { data, error } = await client.auth.exchangeCodeForSession(parsed.code);
+        if (error) {
+          const { data: existing } = await client.auth.getSession();
+          if (existing?.session && isMounted) {
+            if (tokenKey) markTokenConsumed(tokenKey);
+            setUserEmail(existing.session.user?.email || null);
+            setSessionState('verified');
+            if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+              window.history.replaceState({}, '', '/reset-password');
+            }
+            return;
+          }
+
+          const errInfo = getFriendlyErrorMessage(error.name, error.message);
+          if (isMounted) {
+            setErrorMessage(errInfo.description);
+            setSessionState('unauthorized');
+          }
+          return;
+        }
+
+        if (tokenKey) markTokenConsumed(tokenKey);
+        if (isMounted) {
+          setUserEmail(data.session?.user?.email || data.user?.email || null);
+          setSessionState('verified');
+        }
+        if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+          window.history.replaceState({}, '', '/reset-password');
+        }
+        return;
+      }
+
+      // Case C: Access token in URL hash fragment
+      if (parsed.accessToken) {
+        const { data, error } = await client.auth.setSession({
+          access_token: parsed.accessToken,
+          refresh_token: parsed.refreshToken || '',
+        });
+
+        if (error || !data.session) {
+          const errInfo = getFriendlyErrorMessage('invalid_token', 'Could not establish session from link');
+          if (isMounted) {
+            setErrorMessage(errInfo.description);
+            setSessionState('unauthorized');
+          }
+          return;
+        }
+
+        if (tokenKey) markTokenConsumed(tokenKey);
+        if (isMounted) {
+          setUserEmail(data.session.user?.email || null);
+          setSessionState('verified');
+        }
+        if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+          window.history.replaceState({}, '', '/reset-password');
+        }
+        return;
+      }
+
+      // Case D: Active session check (navigated from /auth/callback or restored from storage)
+      const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+      if (sessionErr || !sessionData?.session) {
+        // Wait a short grace window in case async session storage is in progress
+        await new Promise((res) => setTimeout(res, 350));
+        const { data: retryData } = await client.auth.getSession();
+        if (retryData?.session && isMounted) {
+          setUserEmail(retryData.session.user?.email || null);
+          setSessionState('verified');
+          return;
+        }
+
+        if (isMounted) {
+          setSessionState('unauthorized');
+        }
+        return;
+      }
+
+      if (isMounted) {
+        setUserEmail(sessionData.session.user?.email || null);
+        setSessionState('verified');
+      }
     };
 
     checkGenuineSession();
 
-    // 3. Listen to auth state transitions
+    // Listen to Supabase auth state transitions
     const { data: authListener } = client.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
-        setUserEmail(session?.user?.email || null);
-        setSessionState('verified');
+        if (isMounted) {
+          setUserEmail(session?.user?.email || null);
+          setSessionState('verified');
+        }
       }
     });
 
     return () => {
+      isMounted = false;
       authListener.subscription.unsubscribe();
     };
   }, []);
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid || isSubmitting) return;
+    if (isSubmitting) return;
 
-    setIsSubmitting(true);
     setErrorMessage(null);
+
+    // Validate password match
+    if (!passwordsMatch) {
+      setErrorMessage('Passwords do not match. Please ensure both fields are identical.');
+      return;
+    }
+
+    // Validate password strength rules
+    if (!passwordStrength.isValid) {
+      setErrorMessage(passwordStrength.message || 'Password does not meet the minimum security requirements.');
+      return;
+    }
 
     const client = getSupabaseClient();
     if (!client) {
-      setIsSubmitting(false);
       setErrorMessage('Authentication service connection is unavailable.');
       return;
     }
+
+    // Validate that a genuine recovery session is active
+    const { data: sessionCheck } = await client.auth.getSession();
+    if (!sessionCheck?.session) {
+      setErrorMessage('Your recovery session has expired or is no longer active. Please request a new recovery link from the BML CONNECT Android app.');
+      setSessionState('unauthorized');
+      return;
+    }
+
+    setIsSubmitting(true);
 
     try {
       const { error } = await client.auth.updateUser({
@@ -128,7 +273,7 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
         return;
       }
 
-      // Successful password change
+      // Successful password change confirmed by Supabase
       setIsSuccess(true);
       setIsSubmitting(false);
 
@@ -140,7 +285,7 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
       }
     } catch (err: any) {
       setIsSubmitting(false);
-      setErrorMessage(err.message || 'An unexpected error occurred.');
+      setErrorMessage(err.message || 'An unexpected error occurred while updating your password.');
     }
   };
 
@@ -426,13 +571,20 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
               </p>
             </div>
 
-            {/* Launch App Button */}
-            <div className="pt-2">
+            {/* Launch App Button & Manual Fallback */}
+            <div className="pt-2 space-y-3">
               <DeepLinkButton
                 action="login"
                 label="Open BML CONNECT to Log In"
                 sublabel="Tap to return to your mobile app login screen"
               />
+
+              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-left text-xs space-y-1.5 text-slate-300">
+                <span className="font-semibold text-cyan-300 block">Manual App Launch Fallback:</span>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  If your browser does not open the app automatically, simply switch back to the <strong>BML CONNECT Android app</strong> from your recent apps or phone home screen and sign in with your new password.
+                </p>
+              </div>
             </div>
 
             <div className="pt-2 border-t border-slate-800">

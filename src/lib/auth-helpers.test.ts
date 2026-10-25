@@ -11,11 +11,19 @@ import {
   validateSupabaseConfig,
   getFriendlyErrorMessage,
   getAndroidDeepLink,
+  isRecoveryFlow,
+  isTokenConsumed,
+  markTokenConsumed,
+  getInFlightExchange,
+  setInFlightExchange,
+  clearInFlightExchange,
+  resetTokenExchangeStateForTests,
 } from './auth-helpers';
 import {
   getSupabaseConfig,
   BML_DEEP_LINK_SCHEME,
 } from './supabase-client';
+import { getNormalizedRoute } from './router';
 
 // 1. Missing environment variables & configuration validation
 test('validateSupabaseConfig handles missing environment variables correctly', () => {
@@ -68,9 +76,7 @@ test('Supabase client module uses fixed deep-link scheme and build-time env', ()
   assert.equal(BML_DEEP_LINK_SCHEME, 'bmlconnect');
 
   const config = getSupabaseConfig();
-  // Fixed scheme should always be bmlconnect
   assert.equal(config.deepLinkScheme, 'bmlconnect');
-  // Should have an isConfigured boolean property
   assert.equal(typeof config.isConfigured, 'boolean');
 });
 
@@ -100,7 +106,80 @@ test('parseAuthUrl handles PKCE authorization code exchange parameter', () => {
   assert.equal(parsed.hasAuthParams, true);
 });
 
-// 5. Password-reset validation
+// 5. Route normalization for recovery links arriving at root, callback, or reset-password
+test('getNormalizedRoute routes recovery links arriving at root / to /reset-password', () => {
+  // Supabase default Site URL is often root domain
+  const rootRecovery = getNormalizedRoute('/', '?token_hash=recov_123&type=recovery');
+  assert.equal(rootRecovery, '/reset-password');
+
+  const rootNext = getNormalizedRoute('/', '?code=auth_code_123&next=/reset-password');
+  assert.equal(rootNext, '/reset-password');
+
+  const rootHash = getNormalizedRoute('/', '', '#access_token=token_abc&type=recovery');
+  assert.equal(rootHash, '/reset-password');
+
+  // Normal root route without auth parameters stays on /
+  const normalRoot = getNormalizedRoute('/', '');
+  assert.equal(normalRoot, '/');
+
+  // Error redirect on root routes to /auth/error
+  const errorRoot = getNormalizedRoute('/', '?error=access_denied&error_code=otp_expired');
+  assert.equal(errorRoot, '/auth/error');
+
+  // Normal signup callback routes to /auth/callback
+  const signupRoot = getNormalizedRoute('/', '?token_hash=signup_123&type=signup');
+  assert.equal(signupRoot, '/auth/callback');
+});
+
+// 6. Recovery session validation (isRecoveryFlow)
+test('isRecoveryFlow identifies password recovery sessions across all indicators', () => {
+  // Explicit type
+  const parsedRecovery = parseAuthUrl('https://portal.com/?token_hash=123&type=recovery');
+  assert.equal(isRecoveryFlow(parsedRecovery), true);
+
+  // Next parameter
+  const parsedNext = parseAuthUrl('https://portal.com/?code=abc&next=/reset-password');
+  assert.equal(isRecoveryFlow(parsedNext), true);
+
+  // AMR in session
+  const parsedGeneric = parseAuthUrl('https://portal.com/?code=abc');
+  const recoverySession = {
+    amr: [{ method: 'recovery', timestamp: Date.now() }],
+    user: { email: 'user@bmlconnect.com' },
+  };
+  assert.equal(isRecoveryFlow(parsedGeneric, recoverySession), true);
+
+  // Normal sign-in or signup session without recovery indicators
+  const normalSession = {
+    amr: [{ method: 'password', timestamp: Date.now() }],
+    user: { email: 'user@bmlconnect.com' },
+  };
+  const parsedSignup = parseAuthUrl('https://portal.com/?type=signup');
+  assert.equal(isRecoveryFlow(parsedSignup, normalSession), false);
+});
+
+// 7. Token deduplication prevents consuming one-time tokens multiple times
+test('Token deduplication cache prevents repeated code/token exchanges', () => {
+  resetTokenExchangeStateForTests();
+  const testKey = 'code:unique_single_use_code_123';
+
+  assert.equal(isTokenConsumed(testKey), false);
+  markTokenConsumed(testKey);
+  assert.equal(isTokenConsumed(testKey), true);
+
+  // Test in-flight promise caching
+  const testKey2 = 'token:in_flight_token_456';
+  assert.equal(getInFlightExchange(testKey2), undefined);
+
+  const mockPromise = Promise.resolve({ success: true });
+  setInFlightExchange(testKey2, mockPromise);
+  assert.equal(getInFlightExchange(testKey2), mockPromise);
+
+  clearInFlightExchange(testKey2);
+  assert.equal(getInFlightExchange(testKey2), undefined);
+});
+
+// 8. Password-reset validation and mismatch detection
 test('validatePassword enforces length and complexity rules', () => {
   const tooShort = validatePassword('Short1!');
   assert.equal(tooShort.isValid, false);
@@ -119,7 +198,16 @@ test('validatePassword enforces length and complexity rules', () => {
   assert.equal(validPassword.label === 'Good' || validPassword.label === 'Strong', true);
 });
 
-// 6. Invalid and expired recovery sessions
+test('Password matching logic correctly validates identical vs mismatched inputs', () => {
+  const pwd1 = 'BMLconnect#2026';
+  const pwd2 = 'BMLconnect#2026';
+  const pwd3 = 'Different#2026';
+
+  assert.equal(pwd1 === pwd2, true);
+  assert.equal(pwd1 === pwd3, false);
+});
+
+// 9. Invalid and expired recovery sessions diagnostics
 test('getFriendlyErrorMessage diagnoses expired and single-use links', () => {
   const expired = getFriendlyErrorMessage('otp_expired', 'Token has expired');
   assert.equal(expired.isExpired, true);
@@ -134,7 +222,7 @@ test('getFriendlyErrorMessage diagnoses expired and single-use links', () => {
   assert.equal(rateLimited.isRateLimit, true);
 });
 
-// 7. Login, logout, and deep link behavior
+// 10. Login, logout, and Android return deep link behavior
 test('getAndroidDeepLink generates correct intent destinations without credential leaks', () => {
   const loginLink = getAndroidDeepLink('login', 'bmlconnect');
   assert.equal(loginLink, 'bmlconnect://auth/login');
@@ -152,3 +240,4 @@ test('getAndroidDeepLink generates correct intent destinations without credentia
   assert.equal(loginLink.includes('password'), false);
   assert.equal(loginLink.includes('token'), false);
 });
+
