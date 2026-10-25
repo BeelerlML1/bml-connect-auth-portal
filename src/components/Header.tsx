@@ -3,32 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Smartphone, Settings, AlertTriangle, Menu, X, ExternalLink, KeyRound } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Smartphone, Menu, X, KeyRound, AlertTriangle } from 'lucide-react';
 import { AppRoute } from '../lib/router';
-import { getSupabaseConfig, SupabaseConfigState } from '../lib/supabase-client';
+import { getSupabaseConfig } from '../lib/supabase-client';
 
 interface HeaderProps {
   currentPath: AppRoute;
   navigate: (to: string) => void;
   onOpenAndroidGuide: () => void;
-  onOpenConfigModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentPath,
   navigate,
   onOpenAndroidGuide,
-  onOpenConfigModal,
 }) => {
-  const [config, setConfig] = useState<SupabaseConfigState>(getSupabaseConfig);
+  const config = getSupabaseConfig();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    const update = () => setConfig(getSupabaseConfig());
-    window.addEventListener('bml_config_changed', update);
-    return () => window.removeEventListener('bml_config_changed', update);
-  }, []);
 
   const handleNav = (path: string) => {
     navigate(path);
@@ -105,34 +97,31 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </nav>
 
-          {/* Right Action buttons */}
-          <div className="hidden sm:flex items-center gap-2.5">
-            {/* Supabase Status Pill */}
-            <button
-              onClick={onOpenConfigModal}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+          {/* Right Action status & Guide */}
+          <div className="hidden sm:flex items-center gap-3">
+            {/* Read-Only Status Indicator */}
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border select-none ${
                 config.isConfigured
-                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
+                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                  : 'bg-slate-800/60 text-slate-400 border-slate-700/60'
               }`}
-              title="Click to view or edit Supabase configuration"
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  config.isConfigured ? 'bg-emerald-400' : 'bg-amber-400'
+                  config.isConfigured ? 'bg-emerald-400' : 'bg-slate-500'
                 }`}
               />
-              <span>{config.isConfigured ? 'Supabase Active' : 'Config Required'}</span>
-              <Settings className="w-3.5 h-3.5 ml-0.5 text-slate-400" />
-            </button>
+              <span>{config.isConfigured ? 'Auth Service Online' : 'Auth Service Standby'}</span>
+            </div>
 
-            {/* Android Setup Guide */}
+            {/* Deployment & Setup Guide */}
             <button
               onClick={onOpenAndroidGuide}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white shadow-md shadow-blue-900/30 transition-all active:scale-95"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span>Android Guide</span>
+              <span>Deployment Guide</span>
             </button>
           </div>
 
@@ -156,24 +145,20 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
               Navigation
             </span>
-            <button
-              onClick={() => {
-                setIsMobileMenuOpen(false);
-                onOpenConfigModal();
-              }}
+            <div
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
                 config.isConfigured
                   ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-slate-800/80 text-slate-400 border-slate-700/60'
               }`}
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  config.isConfigured ? 'bg-emerald-400' : 'bg-amber-400'
+                  config.isConfigured ? 'bg-emerald-400' : 'bg-slate-500'
                 }`}
               />
-              <span>{config.isConfigured ? 'Connected' : 'Config Pending'}</span>
-            </button>
+              <span>{config.isConfigured ? 'Online' : 'Standby'}</span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-1">
@@ -207,7 +192,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          <div className="pt-2 border-t border-slate-800 space-y-2">
+          <div className="pt-2 border-t border-slate-800">
             <button
               onClick={() => {
                 setIsMobileMenuOpen(false);
@@ -216,18 +201,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow"
             >
               <Smartphone className="w-4 h-4" />
-              <span>Android & Netlify Setup Guide</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setIsMobileMenuOpen(false);
-                onOpenConfigModal();
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700/60"
-            >
-              <Settings className="w-4 h-4 text-cyan-400" />
-              <span>Configure Supabase Keys</span>
+              <span>Netlify & Android Setup Guide</span>
             </button>
           </div>
         </div>

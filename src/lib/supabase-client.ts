@@ -10,70 +10,63 @@ export interface SupabaseConfigState {
   url: string;
   anonKey: string;
   isConfigured: boolean;
-  source: 'env' | 'custom' | 'none';
   errorMessage?: string;
   deepLinkScheme: string;
 }
 
-const STORAGE_KEY_URL = 'bml_connect_supabase_url';
-const STORAGE_KEY_ANON = 'bml_connect_supabase_anon_key';
-const STORAGE_KEY_SCHEME = 'bml_connect_deep_link_scheme';
+// Fixed Android deep-link scheme for BML CONNECT
+export const BML_DEEP_LINK_SCHEME = 'bmlconnect';
 
 let clientInstance: SupabaseClient | null = null;
 let currentConfigHash = '';
 
 /**
- * Reads the current Supabase configuration from environment variables or browser storage.
+ * Safely reads Vite environment variables (or process.env fallback during node:test).
+ */
+function getEnv(): Record<string, string | undefined> {
+  if (typeof import.meta !== 'undefined' && import.meta && (import.meta as any).env) {
+    return (import.meta as any).env;
+  }
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env;
+  }
+  return {};
+}
+
+/**
+ * Reads fixed build-time Supabase configuration strictly from environment variables.
+ * Never uses localStorage, sessionStorage, or user-editable browser storage.
  */
 export function getSupabaseConfig(): SupabaseConfigState {
-  const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-  const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
-  const defaultScheme = (import.meta.env.VITE_APP_DEEP_LINK_SCHEME || 'bmlconnect').trim();
+  const env = getEnv();
+  const envUrl = (env.VITE_SUPABASE_URL || '').trim();
+  const envKey = (env.VITE_SUPABASE_ANON_KEY || '').trim();
 
-  // 1. Check environment variables first
-  if (envUrl && envKey && !envUrl.includes('your-project-id')) {
-    const validation = validateSupabaseConfig(envUrl, envKey);
+  // If env vars are completely unset or contain default placeholders
+  if (!envUrl || !envKey || envUrl.includes('your-project-id')) {
     return {
-      url: envUrl,
-      anonKey: envKey,
-      isConfigured: validation.isValid,
-      source: 'env',
-      errorMessage: validation.errorMessage,
-      deepLinkScheme: defaultScheme,
+      url: '',
+      anonKey: '',
+      isConfigured: false,
+      errorMessage: 'Authentication service is not configured. Please contact system support.',
+      deepLinkScheme: BML_DEEP_LINK_SCHEME,
     };
   }
 
-  // 2. Check local storage if env vars not provided
-  if (typeof window !== 'undefined') {
-    const customUrl = (localStorage.getItem(STORAGE_KEY_URL) || '').trim();
-    const customKey = (localStorage.getItem(STORAGE_KEY_ANON) || '').trim();
-    const customScheme = (localStorage.getItem(STORAGE_KEY_SCHEME) || defaultScheme).trim();
-
-    if (customUrl && customKey) {
-      const validation = validateSupabaseConfig(customUrl, customKey);
-      return {
-        url: customUrl,
-        anonKey: customKey,
-        isConfigured: validation.isValid,
-        source: 'custom',
-        errorMessage: validation.errorMessage,
-        deepLinkScheme: customScheme,
-      };
-    }
-  }
+  // Validate format and ensure no secret/service_role key is used
+  const validation = validateSupabaseConfig(envUrl, envKey);
 
   return {
-    url: '',
-    anonKey: '',
-    isConfigured: false,
-    source: 'none',
-    errorMessage: 'No Supabase URL and Anon Key configured.',
-    deepLinkScheme: defaultScheme,
+    url: validation.sanitizedUrl || envUrl,
+    anonKey: envKey,
+    isConfigured: validation.isValid,
+    errorMessage: validation.errorMessage,
+    deepLinkScheme: BML_DEEP_LINK_SCHEME,
   };
 }
 
 /**
- * Returns an initialized Supabase client singleton or null if not configured.
+ * Returns the initialized Supabase client singleton, or null if configuration is missing/invalid.
  */
 export function getSupabaseClient(): SupabaseClient | null {
   const config = getSupabaseConfig();
@@ -98,45 +91,15 @@ export function getSupabaseClient(): SupabaseClient | null {
     currentConfigHash = hash;
     return clientInstance;
   } catch (err) {
-    console.error('Failed to initialize Supabase client:', err);
+    // Never log raw tokens or keys
+    console.error('Failed to initialize Supabase client instance.');
     return null;
   }
 }
 
 /**
- * Saves custom public config (e.g. entered via setup modal during sandbox testing).
+ * Returns true if the portal has valid build-time Supabase credentials configured.
  */
-export function saveCustomConfig(url: string, anonKey: string, scheme?: string): { success: boolean; error?: string } {
-  const validation = validateSupabaseConfig(url, anonKey);
-  if (!validation.isValid) {
-    return { success: false, error: validation.errorMessage || 'Invalid configuration' };
-  }
-
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_URL, url.trim());
-    localStorage.setItem(STORAGE_KEY_ANON, anonKey.trim());
-    if (scheme) {
-      localStorage.setItem(STORAGE_KEY_SCHEME, scheme.trim());
-    }
-    // Invalidate client instance
-    clientInstance = null;
-    currentConfigHash = '';
-    window.dispatchEvent(new Event('bml_config_changed'));
-  }
-
-  return { success: true };
-}
-
-/**
- * Clears custom saved config.
- */
-export function clearCustomConfig(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_KEY_URL);
-    localStorage.removeItem(STORAGE_KEY_ANON);
-    localStorage.removeItem(STORAGE_KEY_SCHEME);
-    clientInstance = null;
-    currentConfigHash = '';
-    window.dispatchEvent(new Event('bml_config_changed'));
-  }
+export function isSupabaseConfigured(): boolean {
+  return getSupabaseConfig().isConfigured;
 }

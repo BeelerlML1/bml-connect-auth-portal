@@ -9,12 +9,11 @@ import {
   AlertTriangle,
   RefreshCw,
   Smartphone,
-  ExternalLink,
   ShieldCheck,
   ArrowRight,
   Mail,
   Home,
-  Settings,
+  ShieldAlert,
 } from 'lucide-react';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { getSupabaseClient, getSupabaseConfig } from '../lib/supabase-client';
@@ -23,7 +22,6 @@ import { DeepLinkButton } from '../components/DeepLinkButton';
 
 interface AuthCallbackViewProps {
   navigate: (to: string, searchParams?: Record<string, string>) => void;
-  onOpenConfigModal: () => void;
   onOpenAndroidGuide: () => void;
 }
 
@@ -38,24 +36,20 @@ type CallbackStatus =
 
 export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
   navigate,
-  onOpenConfigModal,
   onOpenAndroidGuide,
 }) => {
   const [status, setStatus] = useState<CallbackStatus>('analyzing');
   const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
   const [friendlyError, setFriendlyError] = useState<FriendlyError | null>(null);
-  const [detectedType, setDetectedType] = useState<string | null>(null);
   const executionRef = useRef(false);
 
   useEffect(() => {
-    // Avoid double execution in dev mode
+    // Avoid double execution in React StrictMode
     if (executionRef.current) return;
     executionRef.current = true;
 
     const fullUrl = window.location.href;
     const parsed = parseAuthUrl(fullUrl);
-
-    setDetectedType(parsed.type);
 
     // 1. Check if error is present in query or hash
     if (parsed.error || parsed.errorCode) {
@@ -71,7 +65,7 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
       return;
     }
 
-    // 3. Check if Supabase client is configured
+    // 3. Check if Supabase client is configured via fixed build-time environment variables
     const client = getSupabaseClient();
     const config = getSupabaseConfig();
     if (!client || !config.isConfigured) {
@@ -99,16 +93,16 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
             return;
           }
 
+          // Strict separation: password recovery must ALWAYS open the reset-password screen
           if (otpType === 'recovery') {
             setStatus('redirecting_recovery');
-            // Give user a brief visual indicator before clean redirection to reset password
             setTimeout(() => {
               navigate('/reset-password');
-            }, 1000);
+            }, 800);
             return;
           }
 
-          // Email confirmation or signup
+          // Email confirmation flow
           const email = data.user?.email || data.session?.user?.email || null;
           setVerifiedEmail(email);
           setStatus('success');
@@ -129,7 +123,7 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
             setStatus('redirecting_recovery');
             setTimeout(() => {
               navigate('/reset-password');
-            }, 1000);
+            }, 800);
             return;
           }
 
@@ -152,7 +146,7 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
             setStatus('redirecting_recovery');
             setTimeout(() => {
               navigate('/reset-password');
-            }, 1000);
+            }, 800);
             return;
           }
 
@@ -163,7 +157,7 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
 
         setStatus('no_params');
       } catch (err: any) {
-        setFriendlyError(getFriendlyErrorMessage('unexpected_error', err.message || 'Unknown network error'));
+        setFriendlyError(getFriendlyErrorMessage('unexpected_error', err.message || 'Network communication error'));
         setStatus('error');
       }
     };
@@ -216,7 +210,7 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
                 Recovery Token Verified!
               </h2>
               <p className="text-xs text-slate-300 max-w-sm mx-auto">
-                Opening the secure password reset form for your BML CONNECT account...
+                Opening the secure password reset screen for your BML CONNECT account...
               </p>
             </div>
 
@@ -278,47 +272,33 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
           </div>
         )}
 
-        {/* State 4: Supabase Unconfigured */}
+        {/* State 4: Supabase Unconfigured (Professional message, NO customer input fields) */}
         {status === 'unconfigured' && (
           <div className="text-center space-y-5 py-4">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
-              <AlertTriangle className="w-7 h-7 text-amber-400" />
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+              <ShieldAlert className="w-7 h-7 text-amber-400" />
             </div>
 
             <div className="space-y-2">
               <h2 className="text-xl font-bold text-white font-['Plus_Jakarta_Sans']">
-                Supabase Credentials Required
+                Authentication Service Unavailable
               </h2>
               <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
-                This verification link contains a security token ({detectedType || 'auth'}), but the portal cannot reach Supabase because public project credentials haven't been provided yet.
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-left text-xs space-y-2 text-slate-300">
-              <p className="font-semibold text-cyan-300">What needs to be added:</p>
-              <ul className="space-y-1 list-disc list-inside text-slate-400 font-mono text-[11px]">
-                <li>VITE_SUPABASE_URL</li>
-                <li>VITE_SUPABASE_ANON_KEY</li>
-              </ul>
-              <p className="text-[11px] text-slate-400">
-                Set these in Netlify Environment Variables or test them in your browser now.
+                The authentication service is temporarily unavailable or undergoing scheduled configuration. Please try again shortly or contact BML CONNECT support from the mobile application.
               </p>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <DeepLinkButton
+                action="error"
+                label="Open BML CONNECT App"
+                sublabel="Return to your Android device"
+              />
               <button
-                onClick={onOpenConfigModal}
-                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 flex items-center justify-center gap-2"
+                onClick={() => navigate('/')}
+                className="py-3 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors"
               >
-                <Settings className="w-4 h-4" />
-                <span>Enter Credentials to Test</span>
-              </button>
-              <button
-                onClick={onOpenAndroidGuide}
-                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 flex items-center justify-center gap-2"
-              >
-                <Smartphone className="w-4 h-4" />
-                <span>View Android Guide</span>
+                Return to Overview
               </button>
             </div>
           </div>

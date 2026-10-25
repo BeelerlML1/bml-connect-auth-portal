@@ -5,19 +5,13 @@
 
 import React, { useState } from 'react';
 import {
-  ShieldCheck,
   Smartphone,
-  Lock,
-  ArrowRight,
   KeyRound,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
   Search,
-  Zap,
   Globe,
   Radio,
-  ExternalLink,
+  ShieldCheck,
+  AlertCircle,
 } from 'lucide-react';
 import { getSupabaseConfig } from '../lib/supabase-client';
 import { parseAuthUrl } from '../lib/auth-helpers';
@@ -25,13 +19,11 @@ import { parseAuthUrl } from '../lib/auth-helpers';
 interface HomeViewProps {
   navigate: (to: string, searchParams?: Record<string, string>) => void;
   onOpenAndroidGuide: () => void;
-  onOpenConfigModal: () => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
   navigate,
   onOpenAndroidGuide,
-  onOpenConfigModal,
 }) => {
   const config = getSupabaseConfig();
   const [testUrlInput, setTestUrlInput] = useState('');
@@ -42,21 +34,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     if (!testUrlInput.trim()) return;
     const parsed = parseAuthUrl(testUrlInput.trim());
     setDiagnosticResult(parsed);
-  };
-
-  const handleNavigateWithTest = () => {
-    if (!diagnosticResult) return;
-    if (diagnosticResult.error || diagnosticResult.errorCode) {
-      navigate('/auth/error', {
-        error: diagnosticResult.error || 'error',
-        error_code: diagnosticResult.errorCode || 'unknown',
-        error_description: diagnosticResult.errorDescription || 'Diagnostic test link error',
-      });
-    } else if (diagnosticResult.type === 'recovery') {
-      navigate('/reset-password', diagnosticResult.rawParams);
-    } else {
-      navigate('/auth/callback', diagnosticResult.rawParams);
-    }
   };
 
   return (
@@ -102,7 +79,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 shadow-lg shadow-cyan-500/25 active:scale-95 transition-all"
             >
               <Smartphone className="w-4 h-4" />
-              <span>Android Deployment Guide</span>
+              <span>Android & Netlify Setup</span>
             </button>
 
             <button
@@ -114,10 +91,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </button>
 
             <button
-              onClick={onOpenConfigModal}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl font-medium text-xs text-slate-400 hover:text-slate-200 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-800/80 transition-all"
+              onClick={() => navigate('/auth/error')}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl font-medium text-xs text-slate-300 hover:text-white bg-slate-900/50 hover:bg-slate-800/70 border border-slate-800 transition-all"
             >
-              <span>{config.isConfigured ? 'Supabase: Active' : 'Supabase: Setup'}</span>
+              <span>Link Error Help</span>
             </button>
           </div>
         </div>
@@ -149,15 +126,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <span className="text-xs font-semibold text-slate-400">Supabase Auth</span>
               <span
                 className={`flex items-center gap-1.5 text-xs font-medium ${
-                  config.isConfigured ? 'text-emerald-400' : 'text-amber-400'
+                  config.isConfigured ? 'text-emerald-400' : 'text-slate-400'
                 }`}
               >
                 <span
                   className={`w-2 h-2 rounded-full ${
-                    config.isConfigured ? 'bg-emerald-400' : 'bg-amber-400'
+                    config.isConfigured ? 'bg-emerald-400' : 'bg-slate-500'
                   }`}
                 />
-                {config.isConfigured ? 'Connected' : 'Pending Keys'}
+                {config.isConfigured ? 'Connected' : 'Pending Env Vars'}
               </span>
             </div>
             <p className="text-lg font-bold text-white font-['Plus_Jakarta_Sans']">
@@ -251,7 +228,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </section>
 
-      {/* Diagnostic URL Tester (Safe Link Inspector) */}
+      {/* Diagnostic URL Tester (Read-only parameter inspector) */}
       <section className="max-w-3xl mx-auto px-4">
         <div className="p-6 rounded-2xl bg-[#0F1E3D]/80 border border-cyan-500/25 shadow-xl shadow-cyan-950/30 backdrop-blur-xl space-y-4">
           <div className="flex items-center justify-between">
@@ -260,12 +237,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-white">Email Link Diagnostic Inspector</h3>
                 <p className="text-xs text-slate-400">
-                  Paste any Supabase email confirmation or recovery URL to safely inspect parameters
+                  Inspect an email link to verify parameter structure without transmitting sensitive credentials
                 </p>
               </div>
             </div>
             <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-cyan-300 border border-blue-500/30">
-              Safe Sandbox
+              Read-Only
             </span>
           </div>
 
@@ -313,7 +290,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <span className="text-slate-500">Token Hash: </span>
                   <span className="text-slate-300">
                     {diagnosticResult.tokenHash
-                      ? `${diagnosticResult.tokenHash.slice(0, 10)}... (${diagnosticResult.tokenHash.length} chars)`
+                      ? `${diagnosticResult.tokenHash.slice(0, 8)}... (${diagnosticResult.tokenHash.length} chars)`
                       : 'None'}
                   </span>
                 </div>
@@ -330,16 +307,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   </span>
                 </div>
               </div>
-
-              {diagnosticResult.hasAuthParams && (
-                <button
-                  onClick={handleNavigateWithTest}
-                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs transition-colors mt-2"
-                >
-                  <span>Simulate Real Route with These Parameters</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
           )}
         </div>

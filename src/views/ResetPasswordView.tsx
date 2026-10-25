@@ -24,7 +24,6 @@ import { DeepLinkButton } from '../components/DeepLinkButton';
 interface ResetPasswordViewProps {
   navigate: (to: string) => void;
   onOpenAndroidGuide: () => void;
-  onOpenConfigModal: () => void;
 }
 
 type SessionVerificationState = 'checking' | 'verified' | 'unauthorized' | 'unconfigured';
@@ -32,7 +31,6 @@ type SessionVerificationState = 'checking' | 'verified' | 'unauthorized' | 'unco
 export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
   navigate,
   onOpenAndroidGuide,
-  onOpenConfigModal,
 }) => {
   const [sessionState, setSessionState] = useState<SessionVerificationState>('checking');
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -115,7 +113,7 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
     const client = getSupabaseClient();
     if (!client) {
       setIsSubmitting(false);
-      setErrorMessage('Supabase client connection unavailable.');
+      setErrorMessage('Authentication service connection is unavailable.');
       return;
     }
 
@@ -134,11 +132,11 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
       setIsSuccess(true);
       setIsSubmitting(false);
 
-      // Clean up session from browser storage for mobile security
+      // Clean up browser session for security
       try {
         await client.auth.signOut();
       } catch {
-        // Ignore sign-out cleanup issues
+        // Ignore signOut cleanup errors
       }
     } catch (err: any) {
       setIsSubmitting(false);
@@ -169,32 +167,31 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
           </div>
         )}
 
-        {/* State 2: Unconfigured */}
+        {/* State 2: Unconfigured (Professional message, no customer inputs) */}
         {sessionState === 'unconfigured' && (
           <div className="text-center space-y-5 py-4">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
-              <AlertTriangle className="w-7 h-7 text-amber-400" />
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+              <ShieldAlert className="w-7 h-7 text-amber-400" />
             </div>
             <div className="space-y-2">
               <h2 className="text-xl font-bold text-white font-['Plus_Jakarta_Sans']">
-                Supabase Credentials Required
+                Authentication Service Unavailable
               </h2>
               <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
-                Before testing password recovery, please provide your public Supabase Project URL and Anon Key.
+                The password recovery service is temporarily unavailable or undergoing scheduled configuration. Please try again shortly or request assistance via the BML CONNECT Android app.
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <DeepLinkButton
+                action="error"
+                label="Open BML CONNECT App"
+                sublabel="Return to your Android device"
+              />
               <button
-                onClick={onOpenConfigModal}
-                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500"
+                onClick={() => navigate('/')}
+                className="py-3 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors"
               >
-                Configure Supabase Keys
-              </button>
-              <button
-                onClick={onOpenAndroidGuide}
-                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700"
-              >
-                View Android Setup Guide
+                Return to Overview
               </button>
             </div>
           </div>
@@ -239,13 +236,13 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
               <button
                 onClick={() => navigate('/auth/error')}
-                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500"
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 transition-colors"
               >
                 Common Link Issues
               </button>
               <button
                 onClick={() => navigate('/')}
-                className="py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700"
+                className="py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors"
               >
                 Return to Overview
               </button>
@@ -253,7 +250,7 @@ export const ResetPasswordView: React.FC<ResetPasswordViewProps> = ({
           </div>
         )}
 
-        {/* State 4: Genuine session verified - show form or success */}
+        {/* State 4: Genuine session verified - show secure reset form */}
         {sessionState === 'verified' && !isSuccess && (
           <div className="space-y-6">
             <div className="text-center space-y-2">

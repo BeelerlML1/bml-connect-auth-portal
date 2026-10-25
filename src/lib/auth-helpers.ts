@@ -255,22 +255,22 @@ export function getFriendlyErrorMessage(errorCode?: string | null, errorDescript
     };
   }
 
-  if (code === 'access_denied' || desc.includes('access denied')) {
-    return {
-      title: 'Access Denied',
-      description: 'Access was denied by the authentication server. The link may have been revoked or invalidated by a newer request.',
-      resolution: 'Please trigger a new verification or password reset request directly in the BML CONNECT Android app.',
-      isExpired: false,
-      isRateLimit: false,
-    };
-  }
-
   if (desc.includes('already used') || desc.includes('single-use') || desc.includes('already confirmed')) {
     return {
       title: 'Link Already Used',
       description: 'This one-time verification token has already been consumed. Supabase links can only be used once to protect your account.',
       resolution: 'If you already verified your account, open the BML CONNECT app to log in. If you need to reset your password, request a new link.',
       isExpired: true,
+      isRateLimit: false,
+    };
+  }
+
+  if (code === 'access_denied' || desc.includes('access denied')) {
+    return {
+      title: 'Access Denied',
+      description: 'Access was denied by the authentication server. The link may have been revoked or invalidated by a newer request.',
+      resolution: 'Please trigger a new verification or password reset request directly in the BML CONNECT Android app.',
+      isExpired: false,
       isRateLimit: false,
     };
   }

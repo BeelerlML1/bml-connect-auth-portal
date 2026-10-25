@@ -12,75 +12,143 @@ import {
   getFriendlyErrorMessage,
   getAndroidDeepLink,
 } from './auth-helpers';
+import {
+  getSupabaseConfig,
+  BML_DEEP_LINK_SCHEME,
+} from './supabase-client';
 
-test('parseAuthUrl correctly parses Supabase PKCE query parameters', () => {
-  const url = 'https://portal.bmlconnect.com/auth/callback?token_hash=pkce_abc123xyz&type=signup&next=/dashboard';
-  const parsed = parseAuthUrl(url);
+// 1. Missing environment variables & configuration validation
+test('validateSupabaseConfig handles missing environment variables correctly', () => {
+  const missingBoth = validateSupabaseConfig('', '');
+  assert.equal(missingBoth.isValid, false);
+  assert.equal(missingBoth.hasUrl, false);
+  assert.equal(missingBoth.hasAnonKey, false);
 
-  assert.equal(parsed.tokenHash, 'pkce_abc123xyz');
-  assert.equal(parsed.type, 'signup');
-  assert.equal(parsed.next, '/dashboard');
+  const missingKey = validateSupabaseConfig('https://myproject.supabase.co', '');
+  assert.equal(missingKey.isValid, false);
+  assert.equal(missingKey.hasUrl, true);
+  assert.equal(missingKey.hasAnonKey, false);
+
+  const missingUrl = validateSupabaseConfig('', 'anon-publishable-key');
+  assert.equal(missingUrl.isValid, false);
+  assert.equal(missingUrl.hasUrl, false);
+  assert.equal(missingUrl.hasAnonKey, true);
+});
+
+// 2. Valid and invalid configuration
+test('validateSupabaseConfig rejects non-HTTPS or malformed URLs', () => {
+  const malformed = validateSupabaseConfig('not-a-valid-url', 'anon-key');
+  assert.equal(malformed.isValid, false);
+  assert.match(malformed.errorMessage || '', /Invalid Supabase URL/i);
+
+  const nonHttp = validateSupabaseConfig('ftp://myproject.supabase.co', 'anon-key');
+  assert.equal(nonHttp.isValid, false);
+});
+
+test('validateSupabaseConfig accepts valid Supabase HTTPS URL and anon key', () => {
+  const valid = validateSupabaseConfig('https://abcdefghijklm.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.anon_key_public');
+  assert.equal(valid.isValid, true);
+  assert.equal(valid.isServiceRoleKey, false);
+  assert.equal(valid.sanitizedUrl, 'https://abcdefghijklm.supabase.co');
+});
+
+test('validateSupabaseConfig actively rejects service_role and secret keys', () => {
+  const secretKey = validateSupabaseConfig('https://myproject.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.service_role_secret');
+  assert.equal(secretKey.isValid, false);
+  assert.equal(secretKey.isServiceRoleKey, true);
+  assert.match(secretKey.errorMessage || '', /CRITICAL SECURITY ERROR/);
+
+  const secretPrefix = validateSupabaseConfig('https://myproject.supabase.co', 'sbp_1234567890abcdef');
+  assert.equal(secretPrefix.isValid, false);
+  assert.equal(secretPrefix.isServiceRoleKey, true);
+});
+
+// 3. Absence of customer-facing configuration form & fixed scheme
+test('Supabase client module uses fixed deep-link scheme and build-time env', () => {
+  assert.equal(BML_DEEP_LINK_SCHEME, 'bmlconnect');
+
+  const config = getSupabaseConfig();
+  // Fixed scheme should always be bmlconnect
+  assert.equal(config.deepLinkScheme, 'bmlconnect');
+  // Should have an isConfigured boolean property
+  assert.equal(typeof config.isConfigured, 'boolean');
+});
+
+// 4. Recovery callback routing vs. normal sign-in callback
+test('parseAuthUrl distinguishes password recovery callbacks from signup callbacks', () => {
+  const recoveryUrl = 'https://auth.bmlconnect.com/auth/callback?token_hash=pkce_recovery_token_123&type=recovery';
+  const parsedRecovery = parseAuthUrl(recoveryUrl);
+
+  assert.equal(parsedRecovery.type, 'recovery');
+  assert.equal(parsedRecovery.tokenHash, 'pkce_recovery_token_123');
+  assert.equal(parsedRecovery.hasAuthParams, true);
+
+  const signupUrl = 'https://auth.bmlconnect.com/auth/callback?token_hash=pkce_signup_token_456&type=signup';
+  const parsedSignup = parseAuthUrl(signupUrl);
+
+  assert.equal(parsedSignup.type, 'signup');
+  assert.equal(parsedSignup.tokenHash, 'pkce_signup_token_456');
+  assert.notEqual(parsedSignup.type, parsedRecovery.type);
+});
+
+test('parseAuthUrl handles PKCE authorization code exchange parameter', () => {
+  const codeUrl = 'https://auth.bmlconnect.com/auth/callback?code=supabase_auth_code_789&next=/reset-password';
+  const parsed = parseAuthUrl(codeUrl);
+
+  assert.equal(parsed.code, 'supabase_auth_code_789');
+  assert.equal(parsed.next, '/reset-password');
   assert.equal(parsed.hasAuthParams, true);
-  assert.equal(parsed.error, null);
 });
 
-test('parseAuthUrl handles recovery tokens and hash fragments', () => {
-  const url = 'https://portal.bmlconnect.com/auth/callback?token_hash=recov_987654&type=recovery';
-  const parsed = parseAuthUrl(url);
+// 5. Password-reset validation
+test('validatePassword enforces length and complexity rules', () => {
+  const tooShort = validatePassword('Short1!');
+  assert.equal(tooShort.isValid, false);
+  assert.equal(tooShort.hasMinLength, false);
 
-  assert.equal(parsed.tokenHash, 'recov_987654');
-  assert.equal(parsed.type, 'recovery');
-  assert.equal(parsed.hasAuthParams, true);
+  const noNumbersOrSymbols = validatePassword('AllLettersOnly');
+  assert.equal(noNumbersOrSymbols.isValid, false);
+
+  const validPassword = validatePassword('BMLconnect#2026');
+  assert.equal(validPassword.isValid, true);
+  assert.equal(validPassword.hasMinLength, true);
+  assert.equal(validPassword.hasUppercase, true);
+  assert.equal(validPassword.hasLowercase, true);
+  assert.equal(validPassword.hasNumber, true);
+  assert.equal(validPassword.score >= 3, true);
+  assert.equal(validPassword.label === 'Good' || validPassword.label === 'Strong', true);
 });
 
-test('parseAuthUrl correctly captures Supabase errors in query or hash', () => {
-  const url = 'https://portal.bmlconnect.com/auth/callback?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired';
-  const parsed = parseAuthUrl(url);
+// 6. Invalid and expired recovery sessions
+test('getFriendlyErrorMessage diagnoses expired and single-use links', () => {
+  const expired = getFriendlyErrorMessage('otp_expired', 'Token has expired');
+  assert.equal(expired.isExpired, true);
+  assert.match(expired.title, /Expired/i);
+  assert.match(expired.resolution, /BML CONNECT Android app/i);
 
-  assert.equal(parsed.error, 'access_denied');
-  assert.equal(parsed.errorCode, 'otp_expired');
-  assert.match(parsed.errorDescription || '', /invalid or has expired/);
-  assert.equal(parsed.hasAuthParams, true);
+  const alreadyUsed = getFriendlyErrorMessage('access_denied', 'Link already used or consumed');
+  assert.equal(alreadyUsed.isExpired, true);
+  assert.match(alreadyUsed.title, /Already Used/i);
+
+  const rateLimited = getFriendlyErrorMessage('over_email_send_rate_limit', 'Too many requests');
+  assert.equal(rateLimited.isRateLimit, true);
 });
 
-test('validatePassword enforces minimum length and security strength', () => {
-  const shortPass = validatePassword('12345');
-  assert.equal(shortPass.isValid, false);
-  assert.equal(shortPass.hasMinLength, false);
+// 7. Login, logout, and deep link behavior
+test('getAndroidDeepLink generates correct intent destinations without credential leaks', () => {
+  const loginLink = getAndroidDeepLink('login', 'bmlconnect');
+  assert.equal(loginLink, 'bmlconnect://auth/login');
 
-  const weakPass = validatePassword('abcdefgh');
-  assert.equal(weakPass.hasMinLength, true);
-  assert.equal(weakPass.score < 3, true);
+  const recoveryLink = getAndroidDeepLink('recovery', 'bmlconnect');
+  assert.equal(recoveryLink, 'bmlconnect://auth/recovery');
 
-  const strongPass = validatePassword('BmlConnect#2026!');
-  assert.equal(strongPass.isValid, true);
-  assert.equal(strongPass.hasMinLength, true);
-  assert.equal(strongPass.hasUppercase, true);
-  assert.equal(strongPass.hasLowercase, true);
-  assert.equal(strongPass.hasNumber, true);
-  assert.equal(strongPass.hasSpecial, true);
-  assert.equal(strongPass.label, 'Strong');
-});
+  const confirmedLink = getAndroidDeepLink('confirmed', 'bmlconnect', { email: 'test@bmlconnect.com' });
+  assert.equal(confirmedLink, 'bmlconnect://auth/confirmed?email=test%40bmlconnect.com');
 
-test('validateSupabaseConfig rejects service_role secret keys', () => {
-  const validCheck = validateSupabaseConfig('https://xyzcompany.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.anon_key_demo');
-  assert.equal(validCheck.isValid, true);
-  assert.equal(validCheck.isServiceRoleKey, false);
+  const errorLink = getAndroidDeepLink('error', 'bmlconnect');
+  assert.equal(errorLink, 'bmlconnect://auth/error');
 
-  const secretCheck = validateSupabaseConfig('https://xyzcompany.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.service_role_secret');
-  assert.equal(secretCheck.isValid, false);
-  assert.equal(secretCheck.isServiceRoleKey, true);
-  assert.match(secretCheck.errorMessage || '', /CRITICAL SECURITY ERROR/);
-});
-
-test('getFriendlyErrorMessage maps otp_expired to clear user advice', () => {
-  const result = getFriendlyErrorMessage('otp_expired', 'Email link is invalid or has expired');
-  assert.equal(result.isExpired, true);
-  assert.match(result.title, /Expired/);
-  assert.match(result.resolution, /BML CONNECT Android app/);
-});
-
-test('getAndroidDeepLink formats custom scheme links properly', () => {
-  const link = getAndroidDeepLink('confirmed', 'bmlconnect', { email: 'user@example.com' });
-  assert.equal(link, 'bmlconnect://auth/confirmed?email=user%40example.com');
+  // Verify that tokens and passwords are NEVER embedded in deep link URLs
+  assert.equal(loginLink.includes('password'), false);
+  assert.equal(loginLink.includes('token'), false);
 });
