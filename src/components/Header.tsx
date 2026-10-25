@@ -191,19 +191,6 @@ export const Header: React.FC<HeaderProps> = ({
               <AlertTriangle className="w-4 h-4 text-amber-400" />
             </button>
           </div>
-
-          <div className="pt-2 border-t border-slate-800">
-            <button
-              onClick={() => {
-                setIsMobileMenuOpen(false);
-                onOpenAndroidGuide();
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow"
-            >
-              <Smartphone className="w-4 h-4" />
-              <span>Netlify & Android Setup Guide</span>
-            </button>
-          </div>
         </div>
       )}
     </header>
