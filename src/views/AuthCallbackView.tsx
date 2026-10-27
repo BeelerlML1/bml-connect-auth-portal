@@ -27,6 +27,7 @@ import {
   getInFlightExchange,
   setInFlightExchange,
   clearInFlightExchange,
+  BML_LOGIN_RETURN_URI,
 } from '../lib/auth-helpers';
 import { DeepLinkButton } from '../components/DeepLinkButton';
 
@@ -327,8 +328,9 @@ export const AuthCallbackView: React.FC<AuthCallbackViewProps> = ({
             {/* Launch App Button */}
             <div className="pt-2">
               <DeepLinkButton
-                action="confirmed"
-                params={verifiedEmail ? { email: verifiedEmail } : undefined}
+                action="login"
+                params={{ confirmed: 'true' }}
+                targetUrl={BML_LOGIN_RETURN_URI}
                 label="Open BML CONNECT App"
                 sublabel="Tap to return to your mobile app"
               />

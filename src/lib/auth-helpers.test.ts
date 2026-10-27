@@ -11,6 +11,9 @@ import {
   validateSupabaseConfig,
   getFriendlyErrorMessage,
   getAndroidDeepLink,
+  getAndroidLoginReturnUri,
+  BML_ANDROID_APP_ID,
+  BML_LOGIN_RETURN_URI,
   isRecoveryFlow,
   isTokenConsumed,
   markTokenConsumed,
@@ -199,9 +202,9 @@ test('validatePassword enforces length and complexity rules', () => {
 });
 
 test('Password matching logic correctly validates identical vs mismatched inputs', () => {
-  const pwd1 = 'BMLconnect#2026';
-  const pwd2 = 'BMLconnect#2026';
-  const pwd3 = 'Different#2026';
+  const pwd1: string = 'BMLconnect#2026';
+  const pwd2: string = 'BMLconnect#2026';
+  const pwd3: string = 'Different#2026';
 
   assert.equal(pwd1 === pwd2, true);
   assert.equal(pwd1 === pwd3, false);
@@ -239,5 +242,23 @@ test('getAndroidDeepLink generates correct intent destinations without credentia
   // Verify that tokens and passwords are NEVER embedded in deep link URLs
   assert.equal(loginLink.includes('password'), false);
   assert.equal(loginLink.includes('token'), false);
+});
+
+// 11. BML CONNECT Android email confirmation return URI
+test('BML CONNECT Android return URI matches native app intent specification', () => {
+  assert.equal(BML_ANDROID_APP_ID, 'com.bmlconnect.app');
+  assert.equal(BML_LOGIN_RETURN_URI, 'bmlconnect://auth/login?confirmed=true');
+
+  const returnUri = getAndroidLoginReturnUri('bmlconnect');
+  assert.equal(returnUri, 'bmlconnect://auth/login?confirmed=true');
+
+  const paramReturnUri = getAndroidDeepLink('login', 'bmlconnect', { confirmed: 'true' });
+  assert.equal(paramReturnUri, 'bmlconnect://auth/login?confirmed=true');
+
+  // Verify that zero authentication tokens or credentials leak in return URI
+  assert.equal(returnUri.includes('access_token'), false);
+  assert.equal(returnUri.includes('refresh_token'), false);
+  assert.equal(returnUri.includes('token_hash'), false);
+  assert.equal(returnUri.includes('password'), false);
 });
 

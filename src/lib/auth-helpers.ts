@@ -348,6 +348,9 @@ export function getFriendlyErrorMessage(errorCode?: string | null, errorDescript
   };
 }
 
+export const BML_ANDROID_APP_ID = 'com.bmlconnect.app';
+export const BML_LOGIN_RETURN_URI = 'bmlconnect://auth/login?confirmed=true';
+
 /**
  * Constructs an Android Deep Link URL to return to the BML CONNECT app.
  */
@@ -359,4 +362,12 @@ export function getAndroidDeepLink(
   const search = new URLSearchParams(params || {}).toString();
   const query = search ? `?${search}` : '';
   return `${scheme}://auth/${action}${query}`;
+}
+
+/**
+ * Returns the exact Android login return URI used after email confirmation:
+ * bmlconnect://auth/login?confirmed=true
+ */
+export function getAndroidLoginReturnUri(scheme = 'bmlconnect'): string {
+  return getAndroidDeepLink('login', scheme, { confirmed: 'true' });
 }
